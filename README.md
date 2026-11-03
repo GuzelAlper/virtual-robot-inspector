@@ -37,5 +37,5 @@ scripts/      Kurulum ve yardimci komutlar
 
 `main` dalina dogrudan kod gonderilmez. Her is icin bir GitHub Issue ve ayri bir `feature/...` dali acilir. Degisiklikler diger ekip uyesinin inceleyecegi Pull Request ile birlestirilir.
 
-Detayli gorev ve zaman plani icin [docs/WORK_PLAN.md](docs/WORK_PLAN.md) dosyasina bakin.
+Detayli gorev ve zaman plani icin [docs/WORK_PLAN.md](docs/WORK_PLAN.md), ilk demonstrasyon kapsami icin [docs/MVP.md](docs/MVP.md) dosyasina bakin.
 
