@@ -22,6 +22,14 @@ Sistem, sanal bir mobil robotu kontrol ederek tanimli kontrol noktalarini ziyare
 - OpenCV
 - YAML ve JSON
 
+## Harici robot modeli
+
+Simulasyonda Unitree Go2 icin asagidaki acik kaynak ROS 2 paketi kullanilir:
+
+- [khaledgabr77/unitree_go2_ros2](https://github.com/khaledgabr77/unitree_go2_ros2)
+
+Bu depo ROS 2 Jazzy, Gazebo Harmonic, CHAMP tabanli hareket kontrolu, RViz ve sanal sensor destegi saglar. Kaynak kodu bu projeye kopyalamak yerine kurulum sirasinda ayri bir bagimlilik olarak klonlanir. Tekrarlanabilir kurulum icin calisan commit kimligi daha sonra sabitlenecektir.
+
 ## Depo yapisi
 
 ```text
@@ -37,5 +45,5 @@ scripts/      Kurulum ve yardimci komutlar
 
 `main` dalina dogrudan kod gonderilmez. Her is icin bir GitHub Issue ve ayri bir `feature/...` dali acilir. Degisiklikler diger ekip uyesinin inceleyecegi Pull Request ile birlestirilir.
 
-Detayli gorev ve zaman plani icin [docs/WORK_PLAN.md](docs/WORK_PLAN.md) dosyasina bakin.
+Kurulum icin [docs/INSTALLATION.md](docs/INSTALLATION.md), ilk demonstrasyon kapsami icin [docs/MVP.md](docs/MVP.md) dosyasina bakin.
 
