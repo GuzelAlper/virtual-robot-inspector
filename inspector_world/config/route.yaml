@@ -1,0 +1,83 @@
+# СГЕНЕРИРОВАНО scripts/generate_world.py — маршрут обхода приборов
+scene: inspection_hall_v1
+start:
+  x: 0.0
+  y: 0.0
+  yaw: 0.0
+checkpoints:
+- id: CP-01
+  station: ST-01
+  instrument: P-01
+  title: Манометр
+  range:
+  - 0
+  - 1.6
+  unit: МПа
+  norm:
+  - 0.2
+  - 1.0
+  pose:
+    x: 10.45
+    y: 1.5
+    yaw: -0.0
+  expected:
+    value: 0.62
+    status: OK
+- id: CP-02
+  station: ST-01
+  instrument: T-01
+  title: Термометр
+  range:
+  - 0
+  - 120
+  unit: °C
+  norm:
+  - 10
+  - 80
+  pose:
+    x: 10.45
+    y: 0.5
+    yaw: -0.0
+  expected:
+    value: 46
+    status: OK
+- id: CP-03
+  station: ST-01
+  instrument: P-02
+  title: Манометр
+  range:
+  - 0
+  - 10
+  unit: бар
+  norm:
+  - 1
+  - 6
+  pose:
+    x: 10.45
+    y: -0.5
+    yaw: -0.0
+  expected:
+    value: 7.8
+    status: ALARM
+- id: CP-04
+  station: ST-01
+  instrument: V-01
+  title: Вакуумметр
+  range:
+  - -0.1
+  - 0
+  unit: МПа
+  norm:
+  - -0.08
+  - -0.02
+  pose:
+    x: 10.45
+    y: -1.5
+    yaw: -0.0
+  expected:
+    value: -0.05
+    status: OK
+finish:
+  x: 0.0
+  y: 0.0
+  yaw: 0.0

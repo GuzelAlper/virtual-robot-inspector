@@ -1,0 +1,189 @@
+# Nav2 (ROS 2 Jazzy) для Unitree Go2 в сцене инспекции.
+# Кадры: world (карта, = мир Gazebo) → map → odom → base_footprint → base_link.
+# Скорости рассчитаны на поднятые пределы CHAMP (gait.yaml: vx ≤ 0.5, wz ≤ 0.8 — см. README).
+
+map_server:
+  ros__parameters:
+    use_sim_time: true
+    frame_id: world
+    topic_name: map
+    # yaml_filename НЕ указывать здесь: параметр конкретного узла перекрыл бы значение из launch
+
+bt_navigator:
+  ros__parameters:
+    use_sim_time: true
+    global_frame: world
+    robot_base_frame: base_footprint
+    odom_topic: /odom
+    bt_loop_duration: 10
+    default_server_timeout: 500       # мс; при нагруженном CPU (рендер на CPU) 20 мс не хватало
+    wait_for_service_timeout: 1000
+    action_server_result_timeout: 900.0
+    navigators: ["navigate_to_pose", "navigate_through_poses"]
+    navigate_to_pose:
+      plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
+    navigate_through_poses:
+      plugin: "nav2_bt_navigator::NavigateThroughPosesNavigator"
+    error_code_names: ["compute_path_error_code", "follow_path_error_code"]
+
+controller_server:
+  ros__parameters:
+    use_sim_time: true
+    controller_frequency: 10.0
+    odom_topic: /odom
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.5
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.5
+    progress_checker_plugins: ["progress_checker"]
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.2
+      movement_time_allowance: 30.0
+    general_goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      stateful: true
+      xy_goal_tolerance: 0.40        # шагающий робот покачивается: жёсткий допуск = бесконечная «доводка»
+      yaw_goal_tolerance: 3.14       # ориентацию у прибора выставляет route_runner (точное выравнивание)
+    FollowPath:
+      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+      desired_linear_vel: 0.45       # нужен поднятый предел CHAMP (gait.yaml: max_linear_velocity_x 0.5)
+      lookahead_dist: 0.9            # дальше «морковка» — меньше виляния от раскачки корпуса при шаге
+      min_lookahead_dist: 0.6
+      max_lookahead_dist: 1.2
+      lookahead_time: 1.5
+      use_velocity_scaled_lookahead_dist: false
+      rotate_to_heading_angular_vel: 0.45
+      transform_tolerance: 0.3
+      min_approach_linear_velocity: 0.2    # медленнее CHAMP почти не шагает — робот «зависал» у цели
+      approach_velocity_scaling_dist: 0.4
+      use_collision_detection: true
+      max_allowed_time_to_collision_up_to_carrot: 1.0
+      use_regulated_linear_velocity_scaling: true
+      use_cost_regulated_linear_velocity_scaling: false
+      regulated_linear_scaling_min_radius: 0.9
+      regulated_linear_scaling_min_speed: 0.1
+      use_rotate_to_heading: true
+      rotate_to_heading_min_angle: 0.8
+      allow_reversing: false
+      max_angular_accel: 0.6
+      max_robot_pose_search_dist: 10.0
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: true
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: odom
+      robot_base_frame: base_footprint
+      rolling_window: true
+      width: 4
+      height: 4
+      resolution: 0.05
+      transform_tolerance: 0.3
+      footprint: "[[0.36, 0.17], [0.36, -0.17], [-0.36, -0.17], [-0.36, 0.17]]"
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        footprint_clearing_enabled: true
+        observation_sources: lidar
+        lidar:
+          topic: /velodyne_points/points
+          data_type: "PointCloud2"
+          marking: true
+          clearing: true
+          min_obstacle_height: 0.12      # ниже — пол и стопы
+          max_obstacle_height: 1.2
+          obstacle_min_range: 0.55       # ближе — собственные ноги
+          obstacle_max_range: 3.0
+          raytrace_min_range: 0.0
+          raytrace_max_range: 3.5
+          expected_update_rate: 0.0      # без лидара (lidar:=false) карта не считается устаревшей
+          inf_is_valid: false
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        inflation_radius: 0.45
+        cost_scaling_factor: 4.0
+      always_send_full_costmap: true
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: true
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      global_frame: world
+      robot_base_frame: base_footprint
+      resolution: 0.05
+      transform_tolerance: 0.3
+      track_unknown_space: true
+      footprint: "[[0.36, 0.17], [0.36, -0.17], [-0.36, -0.17], [-0.36, 0.17]]"
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        footprint_clearing_enabled: true
+        observation_sources: lidar
+        lidar:
+          topic: /velodyne_points/points
+          data_type: "PointCloud2"
+          marking: true
+          clearing: true
+          min_obstacle_height: 0.12
+          max_obstacle_height: 1.2
+          obstacle_min_range: 0.55
+          obstacle_max_range: 3.0
+          raytrace_min_range: 0.0
+          raytrace_max_range: 3.5
+          expected_update_rate: 0.0
+          inf_is_valid: false
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        inflation_radius: 0.45
+        cost_scaling_factor: 4.0
+      always_send_full_costmap: true
+
+planner_server:
+  ros__parameters:
+    use_sim_time: true
+    expected_planner_frequency: 5.0
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner::NavfnPlanner"
+      tolerance: 0.3
+      use_astar: false               # Дейкстра + градиент: путь плавнее, без «ступенек» сетки
+      allow_unknown: false
+
+behavior_server:
+  ros__parameters:
+    use_sim_time: true
+    local_costmap_topic: local_costmap/costmap_raw
+    global_costmap_topic: global_costmap/costmap_raw
+    local_footprint_topic: local_costmap/published_footprint
+    global_footprint_topic: global_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["spin", "backup", "wait"]
+    spin:
+      plugin: "nav2_behaviors::Spin"
+    backup:
+      plugin: "nav2_behaviors::BackUp"
+    wait:
+      plugin: "nav2_behaviors::Wait"
+    local_frame: odom
+    global_frame: world
+    robot_base_frame: base_footprint
+    transform_tolerance: 0.3
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 0.5
+    min_rotational_vel: 0.15
+    rotational_acc_lim: 0.6

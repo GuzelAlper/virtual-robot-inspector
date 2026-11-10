@@ -1,49 +1,64 @@
-# Virtual Robot Inspector
+# Симуляционный прототип инспекционного робота Unitree Go2 EDU
 
-ROS 2 ve Gazebo tabanli sanal robot denetci donem projesi.
+Проектный практикум, УрФУ ИРИТ-РТФ.
+Авторы: **Четин Хюсейн Озгюр**, **Гюзель Алпер**.
 
-## Proje hedefi
+Четвероногий робот Unitree Go2 в Gazebo **автономно, через Nav2** проходит маршрут по
+производственному помещению: стартовая зона → коридор с препятствием → цех со стойкой
+стрелочных приборов. У каждого прибора робот точно встаёт напротив, 2–3 с смотрит на него
+камерой (кадр сохраняется), боком переходит к следующему, затем возвращается на старт и
+формирует отчёт «посещено / не доехал». Оператор ничего не делает руками.
 
-Sistem, sanal bir mobil robotu kontrol ederek tanimli kontrol noktalarini ziyaret eder, engellere tepki verir, sanal inceleme yapar ve gorev sonucunu kaydeder. Gorev mantigi, ortak bir robot arayuzu ve degistirilebilir platform adaptorleri sayesinde belirli bir robot veya simulatora bagimli olmaz.
+![Схема сцены](inspector_world/docs/scene_map.png)
 
-## Ekip
+## Стек
 
-- Alper: sistem mimarisi, Robot API, Mission Manager, Mock Adapter, raporlama ve testler
-- Ozgur: Gazebo dunyasi, robot modeli, sensorler, Nav2 ve Gazebo Adapter
-- Ortak: entegrasyon, kabul testleri, dokumantasyon ve sunum
+| Компонент | Версия / решение |
+|---|---|
+| ОС | Ubuntu 24.04 (WSL2 на Windows 11) |
+| Middleware | ROS 2 Jazzy |
+| Симулятор | Gazebo Sim 8 (Harmonic) |
+| Модель робота | Unitree Go2 — [khaledgabr77/unitree_go2_ros2](https://github.com/khaledgabr77/unitree_go2_ros2), контроллер ходьбы CHAMP |
+| Навигация | Nav2: map_server, NavFn, Regulated Pure Pursuit, behavior server, BT navigator |
+| Миссия | собственный узел `route_runner` (nav2_simple_commander) |
 
-## Planlanan teknoloji
+## Структура репозитория
 
-- Ubuntu 24.04
-- ROS 2 Jazzy
-- Gazebo Harmonic
-- Nav2
-- Python ve rclpy
-- OpenCV
-- YAML ve JSON
-
-## Harici robot modeli
-
-Simulasyonda Unitree Go2 icin asagidaki acik kaynak ROS 2 paketi kullanilir:
-
-- [khaledgabr77/unitree_go2_ros2](https://github.com/khaledgabr77/unitree_go2_ros2)
-
-Bu depo ROS 2 Jazzy, Gazebo Harmonic, CHAMP tabanli hareket kontrolu, RViz ve sanal sensor destegi saglar. Kaynak kodu bu projeye kopyalamak yerine kurulum sirasinda ayri bir bagimlilik olarak klonlanir. Tekrarlanabilir kurulum icin calisan commit kimligi daha sonra sabitlenecektir.
-
-## Depo yapisi
-
-```text
-config/       Gorev, robot ve Nav2 ayarlari
-docs/         Mimari, kurulum ve test belgeleri
-simulation/   Gazebo dunyalari, modeller ve haritalar
-src/          ROS 2 paketleri ve uygulama kodu
-tests/        Birim ve entegrasyon testleri
-scripts/      Kurulum ve yardimci komutlar
+```
+inspector_world/          ROS 2-пакет: сцена, карта, Nav2, миссия (подробно — inspector_world/README.md)
+  config/scene.yaml       описание сцены: помещения, препятствия, станции, приборы
+  scripts/                генератор мира, карты, текстур и маршрута из scene.yaml
+  launch/                 inspection_mission (всё сразу), inspection_world, navigation
+  tools/                  route_runner (миссия), gt_localizer (локализация), stop_all.sh
+docs/SETUP.md             установка окружения с нуля (WSL, ROS 2, Gazebo, Go2, ускорение графики)
+tools/wasd_teleop.py      ручное управление с клавиатуры (для отладки)
 ```
 
-## Gelistirme kurali
+## Быстрый старт
 
-`main` dalina dogrudan kod gonderilmez. Her is icin bir GitHub Issue ve ayri bir `feature/...` dali acilir. Degisiklikler diger ekip uyesinin inceleyecegi Pull Request ile birlestirilir.
+Окружение (Ubuntu 24.04, ROS 2 Jazzy, Gazebo Harmonic, пакет Go2) — по [docs/SETUP.md](docs/SETUP.md). Затем:
 
-Kurulum icin [docs/INSTALLATION.md](docs/INSTALLATION.md), ilk demonstrasyon kapsami icin [docs/MVP.md](docs/MVP.md) dosyasina bakin.
+```bash
+sudo apt install -y ros-jazzy-navigation2
+cd ~/ros2_ws/src
+git clone https://github.com/GuzelAlper/virtual-robot-inspector.git
+cd ~/ros2_ws && colcon build --packages-select inspector_world && source install/setup.bash
 
+ros2 run inspector_world stop_all.sh                    # убрать остатки прошлых запусков
+ros2 launch inspector_world inspection_mission.launch.py software_render:=true
+```
+
+Через ~30 с Go2 встаёт, через ~40 с стартует Nav2 и миссия. Откроются окна Gazebo и камеры
+робота. Ход миссии — в терминале (`[1/4] еду к CP-01 …`, `встал напротив прибора …`),
+отчёт — в `~/inspection_reports/<дата_время>/report.md`.
+
+## Текущее состояние
+
+* [x] окружение ROS 2 + Gazebo, модель Go2, ручное управление
+* [x] сцена: помещения, препятствия, станция с 4 стрелочными приборами (генерируется из YAML)
+* [x] карта для Nav2 из той же сцены, локализация в симуляции
+* [x] автономный обход маршрута через Nav2, точная постановка напротив приборов, возврат на старт
+* [x] отчёт по миссии (Markdown / JSON / CSV + кадры камеры), обработка «не доехал / застрял / упал»
+* [ ] распознавание показаний приборов (нейросеть)
+* [ ] 16 станций × 4 прибора по ТЗ (добавляются в `scene.yaml`)
+* [ ] база данных результатов и пульт оператора

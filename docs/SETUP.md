@@ -58,6 +58,26 @@ colcon build
 echo "source ~/ros2_ws/install/setup.bash" >> ~/.bashrc && source ~/.bashrc
 ```
 
+Поднять пределы скорости контроллера ходьбы CHAMP (по умолчанию 0.3 м/с и 0.5 рад/с —
+маршрут проходится заметно медленнее):
+
+```bash
+sed -i 's/max_linear_velocity_x : 0.3/max_linear_velocity_x : 0.5/; s/max_angular_velocity_z : 0.5/max_angular_velocity_z : 0.8/' \
+  ~/ros2_ws/src/unitree_go2_ros2/unitree_go2_sim/config/gait/gait.yaml
+cd ~/ros2_ws && colcon build --packages-select unitree_go2_sim
+```
+
+## 3а. Nav2 и пакет миссии (этот репозиторий)
+
+```bash
+sudo apt install -y ros-jazzy-navigation2
+cd ~/ros2_ws/src
+git clone https://github.com/GuzelAlper/virtual-robot-inspector.git
+cd ~/ros2_ws                        # собирать только из корня рабочего пространства!
+colcon build --packages-select inspector_world
+source install/setup.bash
+```
+
 ## 4. Ускорение графики (обязательно в WSL)
 
 По умолчанию WSL рисует OpenGL на процессоре (`llvmpipe`), и симуляция идёт в ~20 % от реального времени. Включаем видеокарту:
@@ -73,6 +93,9 @@ glxinfo -B | grep "renderer string"  # должно быть D3D12 (...), а н�
 Если `/dev/dxg` нет — обновить драйвер видеокарты в Windows и перезагрузиться.
 
 Результат у нас: real-time factor вырос с ~20 % до ~57 %.
+
+**Важно:** с GPU-рендером (d3d12) в WSL камера робота (`/rgb_image`) отдаёт чёрные кадры.
+Если нужна камера — запускать симуляцию с `software_render:=true` (рендер на CPU, медленнее).
 
 ## 5. Запуск симуляции
 
@@ -95,8 +118,10 @@ ros2 run rviz2 rviz2 -d ~/ros2_ws/install/unitree_go2_sim/share/unitree_go2_sim/
 Во втором терминале:
 
 ```bash
-python3 tools/wasd_teleop.py            # топик по умолчанию /cmd_vel
+python3 ~/ros2_ws/src/virtual-robot-inspector/tools/wasd_teleop.py   # топик /cmd_vel
 ```
+
+Не запускать одновременно с автоматической миссией (две программы будут слать команды в `/cmd_vel`).
 
 | Клавиша | Действие |
 |---|---|
@@ -112,6 +137,8 @@ python3 tools/wasd_teleop.py            # топик по умолчанию /cm
 
 | Симптом | Причина и решение |
 |---|---|
+| Робот крутится на месте, в логе `no map received` | Остались узлы прошлого запуска — `ros2 run inspector_world stop_all.sh` |
+| `Package '...' not found` | `colcon build` запущен не из `~/ros2_ws` или не выполнен `source ~/ros2_ws/install/setup.bash` |
 | Робот сам едет назад/вперёд | Открыта вторая программа управления (`teleop_twist_keyboard` и т. п.), CHAMP выполняет её последнюю команду. Закрыть всё: `pkill -f teleop_twist_keyboard; pkill -f wasd_teleop.py; ros2 topic pub --times 5 /cmd_vel geometry_msgs/msg/Twist "{}"`. Держать открытой только одну программу управления. |
 | Симуляция медленная (RTF внизу справа в Gazebo < 30 %) | Не включена видеокарта (раздел 4), выключить RViz и сенсоры. |
 | `source: command not found` | Команда введена в PowerShell, а не в Ubuntu. Сначала `wsl -d Ubuntu-24.04`. |
