@@ -1,0 +1,11 @@
+diff --git a/unitree_go2_sim/launch/unitree_go2_launch.py b/unitree_go2_sim/launch/unitree_go2_launch.py
+--- a/unitree_go2_sim/launch/unitree_go2_launch.py
++++ b/unitree_go2_sim/launch/unitree_go2_launch.py
+@@ -252,7 +252,7 @@ def generate_launch_description():
+         executable='parameter_bridge',
+         name='camera_bridge',
+         output='screen',
+-        arguments=[ '/rgb_image@sensor_msgs/msg/Image@gz.msgs.Image', ],
++        arguments=[ '/rgb_image@sensor_msgs/msg/Image[gz.msgs.Image', ],
+         condition=UnlessCondition(LaunchConfiguration('disable_camera')),
+     )

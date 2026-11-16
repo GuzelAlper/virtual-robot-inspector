@@ -21,6 +21,19 @@ Thumbs.db
 # Runtime outputs
 results/
 *.log
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 
 # Gazebo runtime state
 .gazebo/
+
+# Local meeting/transcription artifacts
+.transcription-tools/
+meeting_transcript*.txt
+transcribe_meeting.py
+
+# Local screenshots and generated previews
+gazebo_model_results.png

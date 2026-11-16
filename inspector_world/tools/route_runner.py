@@ -6,11 +6,13 @@
 
 Порядок: ждёт готовности Nav2 → для каждой точки из config/route.yaml отправляет цель
 NavigateToPose → у прибора стоит dwell секунд (камера смотрит на прибор, кадр
-сохраняется) → следующая точка → возврат на старт → отчёт
+сохраняется, результат нейросети принимается из /inspection/gauge_result) →
+следующая точка → возврат на старт → отчёт
 ~/inspection_reports/<дата_время>/ (report.md, results.json, results.csv, кадры).
 
-Показания приборов в этой версии не считываются: отчёт фиксирует только,
-удалось ли доехать до каждой точки («посещено» / «не доехал»).
+Отчёт фиксирует не только навигацию, но и показание, единицу, OK/ALARM,
+уверенность модели и аннотированный кадр. Если AI-узел не запущен или не ответил,
+точка остаётся посещённой, а в отчёте ставится NO_RESULT.
 Ошибка на одной точке не останавливает миссию; итог — COMPLETED / PARTIALLY_COMPLETED / FAILED.
 Состояние миссии публикуется в /inspection/mission_state (std_msgs/String, JSON).
 """
@@ -19,6 +21,7 @@ import csv
 import json
 import math
 import os
+import shutil
 import time
 
 import cv2
@@ -33,6 +36,8 @@ from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
+
+from inspection_db import InspectionDatabase
 
 FRAME = "world"
 
@@ -65,6 +70,9 @@ class Mission:
         share = get_package_share_directory("inspector_world")
         with open(os.path.join(share, "config", "route.yaml"), encoding="utf-8") as f:
             self.route = yaml.safe_load(f)
+        if args.route:
+            with open(os.path.abspath(os.path.expanduser(args.route)), encoding="utf-8") as f:
+                self.route = yaml.safe_load(f)
         self.nav = BasicNavigator(node_name="route_runner")
         self.nav.set_parameters([Parameter("use_sim_time", Parameter.Type.BOOL, True)])
         self.last_frame = None
@@ -72,13 +80,34 @@ class Mission:
         self.gt_yaw = None
         self.nav.create_subscription(Image, args.camera, self.on_image, qos_profile_sensor_data)
         self.nav.create_subscription(Odometry, "/odom/ground_truth", self.on_gt, 10)
+        self.nav.create_subscription(String, "/inspection/gauge_result", self.on_gauge_result, 10)
         self.state_pub = self.nav.create_publisher(String, "/inspection/mission_state", 10)
         self.cmd_pub = self.nav.create_publisher(Twist, "/cmd_vel", 10)
         self.results = []
+        self.ai_results = {}
         self.returned = None
         self.t0 = time.time()
         self.out = os.path.expanduser(os.path.join("~/inspection_reports", time.strftime("%Y%m%d_%H%M%S")))
         os.makedirs(self.out, exist_ok=True)
+        self.db = None
+        self.db_mission_id = None
+        if not args.no_db:
+            try:
+                self.db = InspectionDatabase(args.db)
+                self.db_mission_id = self.db.start_mission(
+                    self.route["scene"],
+                    {"route": args.route or "package://inspector_world/config/route.yaml",
+                     "report_dir": self.out},
+                )
+                self.db.add_event(
+                    self.db_mission_id,
+                    "MISSION_STARTED",
+                    "Автономная инспекция запущена",
+                )
+            except Exception as error:
+                self.log(f"  ⚠ SQLite недоступна: {error}")
+                self.db = None
+                self.db_mission_id = None
 
     # ------------------------------------------------------------------ helpers
     def log(self, text):
@@ -148,6 +177,98 @@ class Mission:
 
     def on_image(self, msg):
         self.last_frame = msg
+
+    def on_gauge_result(self, msg):
+        try:
+            result = json.loads(msg.data)
+        except (json.JSONDecodeError, TypeError):
+            return
+        checkpoint = result.get("checkpoint")
+        if checkpoint:
+            self.ai_results[checkpoint] = result
+
+    def wait_gauge_result(self, checkpoint):
+        """Wait briefly for the AI result published for this checkpoint."""
+        if self.nav.count_publishers("/inspection/gauge_result") == 0:
+            return None
+        end = time.time() + self.args.ai_timeout
+        while time.time() < end:
+            result = self.ai_results.pop(checkpoint, None)
+            if result is not None:
+                return result
+            rclpy.spin_once(self.nav, timeout_sec=0.05)
+        return self.ai_results.pop(checkpoint, None)
+
+    def add_gauge_result(self, row, result):
+        """Add a gauge reading to a mission row and copy its annotated frame."""
+        if result is None:
+            row.update(ai_status="NO_RESULT", gauge_value="", gauge_unit="",
+                       confidence="", needs_retake="", ai_photo="", ai_error="")
+            return
+        status = result.get("status", "ERROR")
+        row.update(
+            ai_status=status,
+            gauge_value=result.get("value", ""),
+            gauge_unit=result.get("unit", ""),
+            confidence=result.get("confidence", ""),
+            needs_retake=bool(result.get("needs_retake", False)),
+            ai_error=result.get("error", ""),
+            ai_photo="",
+        )
+        source = result.get("annotated_image_path")
+        if source and os.path.isfile(source):
+            name = f"{row['checkpoint']}_{row['station']}_{row['instrument']}_AI.png"
+            try:
+                shutil.copy2(source, os.path.join(self.out, name))
+                row["ai_photo"] = name
+            except OSError as error:
+                row["ai_error"] = str(error)
+
+    def add_db_event(self, event_type, message, severity="INFO", payload=None):
+        if self.db is None or self.db_mission_id is None:
+            return
+        try:
+            self.db.add_event(
+                self.db_mission_id, event_type, message, severity=severity, payload=payload
+            )
+        except Exception as error:
+            self.log(f"  ⚠ ошибка записи события SQLite: {error}")
+
+    def save_gauge_result(self, row, result):
+        if self.db is None or self.db_mission_id is None:
+            return
+        if result is None:
+            self.add_db_event(
+                "AI_NO_RESULT",
+                f"Нет результата AI для {row['checkpoint']}/{row['instrument']}",
+                severity="WARNING",
+                payload=row,
+            )
+            return
+        try:
+            station_id = self.db.upsert_station(row["station"])
+            instrument_id = self.db.upsert_instrument(
+                station_id,
+                row["instrument"],
+                result.get("instrument_type", "unknown"),
+                result.get("unit", ""),
+            )
+            self.db.add_measurement(
+                self.db_mission_id,
+                station_id,
+                instrument_id,
+                result.get("status", "ERROR"),
+                value=result.get("value"),
+                normalized_value=result.get("normalized_value"),
+                confidence=result.get("confidence"),
+                image_path=row.get("ai_photo") or result.get("annotated_image_path"),
+                checkpoint_code=row["checkpoint"],
+                error_code="INFERENCE_ERROR" if result.get("status") == "ERROR" else None,
+                error_message=result.get("error"),
+                raw_result=result,
+            )
+        except Exception as error:
+            self.log(f"  ⚠ ошибка записи измерения SQLite: {error}")
 
     def spin_for(self, seconds):
         end = time.time() + seconds
@@ -255,19 +376,38 @@ class Mission:
             row = {"checkpoint": cp["id"], "station": cp["station"], "instrument": cp["instrument"],
                    "title": cp["title"], "nav_time_s": round(time.time() - t_nav, 1)}
             if ok:
-                self.state("AT_INSTRUMENT", checkpoint=cp["id"])
+                self.ai_results.pop(cp["id"], None)
+                self.state(
+                    "AT_INSTRUMENT",
+                    checkpoint=cp["id"],
+                    station=cp["station"],
+                    instrument=cp["instrument"],
+                )
                 self.log(f"  ✓ на месте{' (' + why + ')' if why else ''}, смотрю на прибор {self.args.dwell:g} с")
                 row.update(result="VISITED", reason=why, photo=self.look(cp))
+                gauge_result = self.wait_gauge_result(cp["id"])
+                self.add_gauge_result(row, gauge_result)
+                self.save_gauge_result(row, gauge_result)
+                if gauge_result is None:
+                    self.log("  ⚠ нет результата распознавания")
+                elif gauge_result.get("status") == "ERROR":
+                    self.log(f"  ⚠ ошибка распознавания: {gauge_result.get('error', '—')}")
             else:
                 self.log(f"  ✗ не доехал: {why} — перехожу к следующей точке")
                 row.update(result="NAV_FAILED", reason=why, photo="")
+                self.add_gauge_result(row, None)
+                self.add_db_event(
+                    "NAVIGATION_FAILED", f"{cp['id']}: {why}", severity="ERROR", payload=row
+                )
             self.results.append(row)
             if self.fallen():
                 self.log("  ✗ робот упал — миссия прервана")
                 for rest in cps[i:]:
                     self.results.append({"checkpoint": rest["id"], "station": rest["station"],
                                          "instrument": rest["instrument"], "title": rest["title"],
-                                         "nav_time_s": 0, "result": "NAV_FAILED", "reason": "робот упал", "photo": ""})
+                                         "nav_time_s": 0, "result": "NAV_FAILED", "reason": "робот упал", "photo": "",
+                                         "ai_status": "NO_RESULT", "gauge_value": "", "gauge_unit": "",
+                                         "confidence": "", "needs_retake": "", "ai_photo": "", "ai_error": ""})
                 self.finish("done")
                 return
         if not self.args.no_return:
@@ -292,6 +432,22 @@ class Mission:
         else:
             final = "FAILED"
         self.state(final, visited=visited, total=total)
+        if self.db is not None and self.db_mission_id is not None:
+            try:
+                self.db.add_event(
+                    self.db_mission_id,
+                    "MISSION_FINISHED",
+                    f"Миссия завершена: {final}, {visited}/{total}",
+                    severity="INFO" if final == "COMPLETED" else "WARNING",
+                )
+                self.db.finish_mission(
+                    self.db_mission_id,
+                    final,
+                    duration_s=round(time.time() - self.t0, 1),
+                    returned_to_start=self.returned,
+                )
+            except Exception as error:
+                self.log(f"  ⚠ не удалось завершить миссию в SQLite: {error}")
         self.write_report(final, visited, total)
 
     def write_report(self, final, visited, total):
@@ -301,25 +457,45 @@ class Mission:
                    "visited": visited, "returned_to_start": self.returned, "results": self.results}
         with open(os.path.join(self.out, "results.json"), "w", encoding="utf-8") as f:
             json.dump(summary, f, ensure_ascii=False, indent=2)
-        keys = ["checkpoint", "station", "instrument", "title", "result", "nav_time_s", "photo", "reason"]
+        keys = ["checkpoint", "station", "instrument", "title", "result", "nav_time_s",
+                "gauge_value", "gauge_unit", "ai_status", "confidence", "needs_retake",
+                "photo", "ai_photo", "reason", "ai_error"]
         with open(os.path.join(self.out, "results.csv"), "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=keys, extrasaction="ignore")
             w.writeheader()
             w.writerows(self.results)
         ret = {True: "да", False: "нет", None: "не выполнялся"}[self.returned]
+        read_count = sum(r.get("ai_status") in ("OK", "ALARM") for r in self.results)
+        alarm_count = sum(r.get("ai_status") == "ALARM" for r in self.results)
+        ai_error_count = sum(r.get("ai_status") in ("ERROR", "NO_RESULT") for r in self.results)
         lines = [f"# Отчёт об обходе — {summary['started']}", "",
                  f"* Сцена: **{summary['scene']}**",
                  f"* Итог миссии: **{final}**",
                  f"* Посещено точек: **{visited} из {total}**",
+                 f"* Считано приборов: **{read_count} из {total}**",
+                 f"* Состояний ALARM: **{alarm_count}**",
+                 f"* Ошибок/нет результата AI: **{ai_error_count}**",
                  f"* Длительность: {summary['duration_s']} с (реального времени)",
                  f"* Возврат на старт: {ret}", "",
-                 "| Точка | Станция | Прибор | Результат | Время в пути, с | Кадр | Примечание |",
-                 "|---|---|---|---|---|---|---|"]
+                 "| Точка | Станция | Прибор | Навигация | Показание | Состояние | Уверенность | Время, с | Кадр | AI-кадр | Примечание |",
+                 "|---|---|---|---|---|---|---|---|---|---|---|"]
         for r in self.results:
             res = "✅ посещено" if r["result"] == "VISITED" else "❌ не доехал"
             photo = f"![{r['checkpoint']}]({r['photo']})" if r["photo"] else "—"
+            ai_photo = f"![AI {r['checkpoint']}]({r['ai_photo']})" if r.get("ai_photo") else "—"
+            value = r.get("gauge_value")
+            reading = f"{float(value):.3f} {r.get('gauge_unit', '')}" if value not in (None, "") else "—"
+            status = {"OK": "🟢 OK", "ALARM": "🔴 ALARM", "ERROR": "⚠ ERROR",
+                      "NO_RESULT": "⚠ NO_RESULT"}.get(r.get("ai_status"), "—")
+            confidence = r.get("confidence")
+            confidence_text = f"{float(confidence) * 100:.1f}%" if confidence not in (None, "") else "—"
+            notes = [str(r.get("reason", "")), str(r.get("ai_error", ""))]
+            if r.get("needs_retake"):
+                notes.append("нужен повторный кадр")
+            note = "; ".join(n for n in notes if n)
             lines.append(f"| {r['checkpoint']} | {r['station']} | {r['instrument']} {r['title']} | {res} | "
-                         f"{r['nav_time_s']} | {photo} | {r['reason']} |")
+                         f"{reading} | {status} | {confidence_text} | {r['nav_time_s']} | {photo} | "
+                         f"{ai_photo} | {note} |")
         with open(os.path.join(self.out, "report.md"), "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
         self.log(f"ИТОГ: {final}. Посещено {visited}/{total}.")
@@ -340,6 +516,11 @@ def main():
     ap.add_argument("--near-time", type=float, default=6.0, help="сколько секунд «топтаться» у точки до зачёта")
     ap.add_argument("--fall-height", type=float, default=0.12, help="корпус ниже этой высоты, м → робот упал")
     ap.add_argument("--camera", default="/rgb_image", help="топик камеры для кадра у прибора")
+    ap.add_argument("--route", help="внешний route.yaml; по умолчанию маршрут из пакета")
+    ap.add_argument("--ai-timeout", type=float, default=5.0,
+                    help="сколько ждать /inspection/gauge_result после кадра, с")
+    ap.add_argument("--db", default="~/inspection_data/inspection.db", help="файл SQLite")
+    ap.add_argument("--no-db", action="store_true", help="не сохранять миссию в SQLite")
     ap.add_argument("--no-return", action="store_true", help="не возвращаться на старт")
     args, ros_args = ap.parse_known_args()
     rclpy.init(args=ros_args)

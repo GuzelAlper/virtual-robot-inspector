@@ -22,11 +22,16 @@ from launch_ros.actions import Node
 def generate_launch_description():
     pkg = get_package_share_directory("inspector_world")
     go2_launch = os.path.join(get_package_share_directory("unitree_go2_sim"), "launch", "unitree_go2_launch.py")
-    world = os.path.join(pkg, "worlds", "inspection_hall.sdf")
+    default_world = os.path.join(pkg, "worlds", "inspection_hall.sdf")
     with open(os.path.join(pkg, "config", "route.yaml"), encoding="utf-8") as f:
         start = yaml.safe_load(f)["start"]
 
     args = [
+        DeclareLaunchArgument("world", default_value=default_world,
+                              description="Gazebo SDF world file"),
+        DeclareLaunchArgument("spawn_x", default_value=str(start["x"])),
+        DeclareLaunchArgument("spawn_y", default_value=str(start["y"])),
+        DeclareLaunchArgument("spawn_yaw", default_value=str(start["yaw"])),
         DeclareLaunchArgument("rviz", default_value="false", description="Открыть RViz"),
         DeclareLaunchArgument("lidar", default_value="false",
                               description="Лидар Velodyne: Nav2 видит новые препятствия (тяжелее для ПК)"),
@@ -40,10 +45,10 @@ def generate_launch_description():
     go2 = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(go2_launch),
         launch_arguments={
-            "world": world,
-            "world_init_x": str(start["x"]),
-            "world_init_y": str(start["y"]),
-            "world_init_heading": str(start["yaw"]),
+            "world": LaunchConfiguration("world"),
+            "world_init_x": LaunchConfiguration("spawn_x"),
+            "world_init_y": LaunchConfiguration("spawn_y"),
+            "world_init_heading": LaunchConfiguration("spawn_yaw"),
             "rviz": LaunchConfiguration("rviz"),
             "disable_camera": "false",                 # фронтальная камера /rgb_image — для чтения приборов
             "disable_velodyne_lidar": disable("lidar"),

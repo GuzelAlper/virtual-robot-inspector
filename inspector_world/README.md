@@ -90,8 +90,9 @@ ros2 launch inspector_world inspection_mission.launch.py software_render:=true
 3. у каждого прибора: `✓ на месте, смотрю на прибор 2.5 с`;
 4. возврат на старт и `ИТОГ: COMPLETED`, путь к отчёту.
 
-Результаты: `~/inspection_reports/<дата_время>/` — `report.md` (таблица «посещено / не доехал»
-с кадрами), `results.json`, `results.csv`, кадры камеры у каждого прибора.
+Результаты: `~/inspection_reports/<дата_время>/` — `report.md` (навигация,
+показание прибора, OK/ALARM, уверенность модели, обычный и AI-кадр),
+`results.json`, `results.csv`, кадры камеры у каждого прибора.
 Топик состояния: `/inspection/mission_state`.
 
 ## Изменение сцены
